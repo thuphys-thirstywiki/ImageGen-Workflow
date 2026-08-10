@@ -4,12 +4,27 @@ import { promises as fs } from "fs";
 import path from "path";
 import type { Iteration, Session, SessionSummary } from "./types";
 
+function getBlobToken(): string {
+  // Prefer bracket access so Next doesn't hard-inline an empty build-time value.
+  return (process.env["BLOB_READ_WRITE_TOKEN"] || "").trim();
+}
+
 function useBlobStorage(): boolean {
-  return Boolean(process.env.BLOB_READ_WRITE_TOKEN?.trim());
+  if (getBlobToken()) return true;
+  // On Vercel the filesystem is read-only; never fall back to local disk.
+  if (process.env["VERCEL"]) {
+    throw new Error(
+      "云端未配置 BLOB_READ_WRITE_TOKEN。请在 Vercel 项目中创建并关联 Blob Store。",
+    );
+  }
+  return false;
 }
 
 function dataRoot(): string {
-  const configured = process.env.DATA_DIR?.trim();
+  if (process.env["VERCEL"]) {
+    throw new Error("Vercel 环境禁止使用本地磁盘存储");
+  }
+  const configured = process.env["DATA_DIR"]?.trim();
   if (configured) return path.resolve(configured);
   return path.join(process.cwd(), "data", "sessions");
 }
