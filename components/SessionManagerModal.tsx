@@ -18,7 +18,10 @@ type Props = {
     description: string;
   }) => void | Promise<void>;
   onDelete: (id: string) => void;
-  busy?: boolean;
+  /** True while creating a new task (form submit). */
+  creating?: boolean;
+  /** sessionId → status label for background jobs */
+  jobLabels?: Record<string, string>;
 };
 
 export function SessionManagerModal({
@@ -29,7 +32,8 @@ export function SessionManagerModal({
   onSelect,
   onCreate,
   onDelete,
-  busy,
+  creating,
+  jobLabels = {},
 }: Props) {
   const [title, setTitle] = useState("");
   const [ownerName, setOwnerName] = useState("");
@@ -118,7 +122,7 @@ export function SessionManagerModal({
               onChange={(event) => setTitle(event.target.value)}
               maxLength={80}
               placeholder="例如：海报主视觉 v1"
-              disabled={busy}
+              disabled={creating}
               className="w-full rounded-lg border border-[var(--line)] bg-[var(--bg)] px-3 py-2 text-sm text-[var(--ink)] outline-none ring-[var(--accent)] placeholder:text-[var(--muted)] focus:ring-2 disabled:opacity-50"
             />
           </div>
@@ -135,7 +139,7 @@ export function SessionManagerModal({
               onChange={(event) => setOwnerName(event.target.value)}
               maxLength={40}
               placeholder="你的名字"
-              disabled={busy}
+              disabled={creating}
               className="w-full rounded-lg border border-[var(--line)] bg-[var(--bg)] px-3 py-2 text-sm text-[var(--ink)] outline-none ring-[var(--accent)] placeholder:text-[var(--muted)] focus:ring-2 disabled:opacity-50"
             />
           </div>
@@ -153,7 +157,7 @@ export function SessionManagerModal({
               maxLength={1000}
               rows={4}
               placeholder="说明目标受众、使用场景、风格约束、必含元素等。会写入生图与评审的模型上下文。"
-              disabled={busy}
+              disabled={creating}
               className="w-full resize-y rounded-lg border border-[var(--line)] bg-[var(--bg)] px-3 py-2 text-sm leading-relaxed text-[var(--ink)] outline-none ring-[var(--accent)] placeholder:text-[var(--muted)] focus:ring-2 disabled:opacity-50"
             />
           </div>
@@ -164,7 +168,7 @@ export function SessionManagerModal({
           )}
           <button
             type="submit"
-            disabled={busy}
+            disabled={creating}
             className="w-full rounded-lg bg-[var(--accent)] px-3 py-2.5 text-sm font-medium text-white transition hover:bg-[var(--accent-hover)] disabled:opacity-50"
           >
             新建设计任务
@@ -180,6 +184,7 @@ export function SessionManagerModal({
           {sessions.map((session) => {
             const active = session.id === activeId;
             const thumb = imageUrl(session.latestImagePath);
+            const jobLabel = jobLabels[session.id];
             return (
               <li key={session.id} className="mb-1">
                 <div
@@ -222,6 +227,11 @@ export function SessionManagerModal({
                         轮 ·{" "}
                         {new Date(session.updatedAt).toLocaleString("zh-CN")}
                       </div>
+                      {jobLabel ? (
+                        <div className="mt-0.5 text-[11px] font-medium text-[var(--accent)]">
+                          {jobLabel}
+                        </div>
+                      ) : null}
                     </div>
                     {active && (
                       <span className="shrink-0 text-xs text-[var(--accent)]">
@@ -232,7 +242,8 @@ export function SessionManagerModal({
                   <button
                     type="button"
                     onClick={() => onDelete(session.id)}
-                    className="rounded px-2 py-1 text-xs text-[var(--muted)] opacity-0 transition hover:bg-red-50 hover:text-red-600 group-hover:opacity-100 focus:opacity-100"
+                    disabled={Boolean(jobLabel) || creating}
+                    className="rounded px-2 py-1 text-xs text-[var(--muted)] opacity-0 transition hover:bg-red-50 hover:text-red-600 group-hover:opacity-100 focus:opacity-100 disabled:opacity-30"
                   >
                     删除
                   </button>

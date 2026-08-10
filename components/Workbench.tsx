@@ -8,13 +8,29 @@ import { SessionManagerModal } from "@/components/SessionManagerModal";
 import { apiJson } from "@/lib/client";
 import type { Session, SessionSummary } from "@/lib/types";
 
-type BusyKind = "idle" | "generate" | "critique" | "load";
+type BusyKind = "generate" | "critique" | "load";
 type InputMode = "prompt" | "upload";
 
 type PendingImage = {
   file: File;
   previewUrl: string;
 };
+
+function jobLabel(kind: BusyKind): string {
+  if (kind === "generate") return "生图 / 上传中…";
+  if (kind === "critique") return "评审中…";
+  return "加载中…";
+}
+
+function mergeProposalDrafts(session: Session): Record<string, string> {
+  const drafts: Record<string, string> = {};
+  for (const iteration of session.iterations) {
+    for (const proposal of iteration.critique?.proposals || []) {
+      drafts[proposal.id] = proposal.prompt;
+    }
+  }
+  return drafts;
+}
 
 export function Workbench() {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
@@ -29,11 +45,16 @@ export function Workbench() {
   const [proposalDrafts, setProposalDrafts] = useState<Record<string, string>>(
     {},
   );
-  const [busy, setBusy] = useState<BusyKind>("idle");
+  const [jobs, setJobs] = useState<Record<string, BusyKind>>({});
+  const [creating, setCreating] = useState(false);
+  const [switching, setSwitching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [taskModalOpen, setTaskModalOpen] = useState(false);
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const sessionIdRef = useRef<string | null>(null);
+
+  sessionIdRef.current = session?.id ?? null;
 
   const activeIteration = useMemo(() => {
     if (!session) return null;
@@ -51,6 +72,44 @@ export function Workbench() {
   }, [session, activeIteration]);
 
   const isFirstRound = (session?.iterations.length ?? 0) === 0;
+  const currentJob = session ? jobs[session.id] : undefined;
+  const isCurrentBusy = Boolean(currentJob);
+  const backgroundJobCount = Object.keys(jobs).filter(
+    (id) => id !== session?.id,
+  ).length;
+
+  const jobLabels = useMemo(() => {
+    const labels: Record<string, string> = {};
+    for (const [id, kind] of Object.entries(jobs)) {
+      labels[id] = jobLabel(kind);
+    }
+    return labels;
+  }, [jobs]);
+
+  const setJob = useCallback((sessionId: string, kind: BusyKind | null) => {
+    setJobs((prev) => {
+      if (!kind) {
+        if (!(sessionId in prev)) return prev;
+        const next = { ...prev };
+        delete next[sessionId];
+        return next;
+      }
+      return { ...prev, [sessionId]: kind };
+    });
+  }, []);
+
+  const applySessionIfActive = useCallback(
+    (updated: Session, iterationId?: string | null) => {
+      if (sessionIdRef.current !== updated.id) return;
+      setSession(updated);
+      setTitleDraft(updated.title);
+      setProposalDrafts((prev) => ({ ...prev, ...mergeProposalDrafts(updated) }));
+      if (iterationId) {
+        setActiveIterationId(iterationId);
+      }
+    },
+    [],
+  );
 
   const clearPendingImage = useCallback(() => {
     setPendingImage((prev) => {
@@ -79,7 +138,7 @@ export function Workbench() {
 
   const loadSession = useCallback(
     async (id: string) => {
-      setBusy("load");
+      setSwitching(true);
       setError(null);
       try {
         const data = await apiJson<{ session: Session }>(`/api/sessions/${id}`);
@@ -88,13 +147,7 @@ export function Workbench() {
         const latest =
           data.session.iterations[data.session.iterations.length - 1];
         setActiveIterationId(latest?.id ?? null);
-        const drafts: Record<string, string> = {};
-        for (const iteration of data.session.iterations) {
-          for (const proposal of iteration.critique?.proposals || []) {
-            drafts[proposal.id] = proposal.prompt;
-          }
-        }
-        setProposalDrafts(drafts);
+        setProposalDrafts(mergeProposalDrafts(data.session));
         setPromptDraft("");
         clearPendingImage();
         setInputMode("prompt");
@@ -102,7 +155,7 @@ export function Workbench() {
       } catch (err) {
         setError(err instanceof Error ? err.message : "加载失败");
       } finally {
-        setBusy("idle");
+        setSwitching(false);
       }
     },
     [clearPendingImage],
@@ -130,7 +183,7 @@ export function Workbench() {
     ownerName: string;
     description: string;
   }) {
-    setBusy("load");
+    setCreating(true);
     setError(null);
     try {
       const created = await apiJson<{ session: Session }>("/api/sessions", {
@@ -154,19 +207,20 @@ export function Workbench() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "创建失败");
     } finally {
-      setBusy("idle");
+      setCreating(false);
     }
   }
 
   async function runCritique(
     sessionId: string,
     iterationId: string,
+    sessionSnapshot?: Session,
   ): Promise<Session> {
     const data = await apiJson<{ session: Session }>(
       `/api/sessions/${sessionId}/critique`,
       {
         method: "POST",
-        body: JSON.stringify({ iterationId }),
+        body: JSON.stringify({ iterationId, sessionSnapshot }),
       },
     );
     return data.session;
@@ -178,20 +232,26 @@ export function Workbench() {
       setTaskModalOpen(true);
       return;
     }
+    if (jobs[session.id]) {
+      setError("当前任务正在处理中，可先切换到其他任务");
+      return;
+    }
     const trimmed = prompt.trim();
     if (!trimmed) {
       setError("prompt 不能为空");
       return;
     }
 
-    setBusy("generate");
+    const sessionId = session.id;
+    const endpoint =
+      session.iterations.length === 0
+        ? `/api/sessions/${sessionId}/generate`
+        : `/api/sessions/${sessionId}/iterate`;
+
+    setJob(sessionId, "generate");
     setError(null);
     setPromptDraft("");
     try {
-      const endpoint =
-        session.iterations.length === 0
-          ? `/api/sessions/${session.id}/generate`
-          : `/api/sessions/${session.id}/iterate`;
       const data = await apiJson<{ session: Session; iteration: { id: string } }>(
         endpoint,
         {
@@ -200,33 +260,37 @@ export function Workbench() {
         },
       );
 
-      // Keep the previous stage until critique finishes — do not reveal the new image early.
-      setBusy("critique");
+      setJob(sessionId, "critique");
       try {
         const withCritique = await runCritique(
           data.session.id,
           data.iteration.id,
+          data.session,
         );
-        setSession(withCritique);
-        setActiveIterationId(data.iteration.id);
-        setInputMode("prompt");
+        applySessionIfActive(withCritique, data.iteration.id);
+        if (sessionIdRef.current === sessionId) {
+          setInputMode("prompt");
+        }
         await refreshList();
       } catch (critiqueErr) {
-        setSession(data.session);
-        setActiveIterationId(data.iteration.id);
-        setInputMode("prompt");
+        applySessionIfActive(data.session, data.iteration.id);
+        if (sessionIdRef.current === sessionId) {
+          setInputMode("prompt");
+          setError(
+            critiqueErr instanceof Error
+              ? `图片已生成，但评审失败：${critiqueErr.message}`
+              : "图片已生成，但评审失败；可点「仅重新评审」重试",
+          );
+        }
         await refreshList();
-        setError(
-          critiqueErr instanceof Error
-            ? `图片已生成，但评审失败：${critiqueErr.message}`
-            : "图片已生成，但评审失败；可点「仅重新评审」重试",
-        );
       }
     } catch (err) {
-      setPromptDraft(trimmed);
-      setError(err instanceof Error ? err.message : "生图失败");
+      if (sessionIdRef.current === sessionId) {
+        setPromptDraft(trimmed);
+        setError(err instanceof Error ? err.message : "生图失败");
+      }
     } finally {
-      setBusy("idle");
+      setJob(sessionId, null);
     }
   }
 
@@ -236,20 +300,25 @@ export function Workbench() {
       setTaskModalOpen(true);
       return;
     }
+    if (jobs[session.id]) {
+      setError("当前任务正在处理中，可先切换到其他任务");
+      return;
+    }
     if (!pendingImage) {
       setError("请先选择图片");
       return;
     }
 
+    const sessionId = session.id;
     const file = pendingImage.file;
-    setBusy("generate");
+    setJob(sessionId, "generate");
     setError(null);
     clearPendingImage();
 
     try {
       const form = new FormData();
       form.append("image", file);
-      const response = await fetch(`/api/sessions/${session.id}/upload`, {
+      const response = await fetch(`/api/sessions/${sessionId}/upload`, {
         method: "POST",
         body: form,
       });
@@ -267,51 +336,72 @@ export function Workbench() {
         throw new Error(data.error || `上传失败 (${response.status})`);
       }
 
-      setBusy("critique");
+      setJob(sessionId, "critique");
       try {
         const withCritique = await runCritique(
           data.session.id,
           data.iteration.id,
+          data.session,
         );
-        setSession(withCritique);
-        setActiveIterationId(data.iteration.id);
-        setInputMode("prompt");
+        applySessionIfActive(withCritique, data.iteration.id);
+        if (sessionIdRef.current === sessionId) {
+          setInputMode("prompt");
+        }
         await refreshList();
       } catch (critiqueErr) {
-        setSession(data.session);
-        setActiveIterationId(data.iteration.id);
-        setInputMode("prompt");
+        applySessionIfActive(data.session, data.iteration.id);
+        if (sessionIdRef.current === sessionId) {
+          setInputMode("prompt");
+          setError(
+            critiqueErr instanceof Error
+              ? `图片已上传，但评审失败：${critiqueErr.message}`
+              : "图片已上传，但评审失败；可点「仅重新评审」重试",
+          );
+        }
         await refreshList();
-        setError(
-          critiqueErr instanceof Error
-            ? `图片已上传，但评审失败：${critiqueErr.message}`
-            : "图片已上传，但评审失败；可点「仅重新评审」重试",
-        );
       }
     } catch (err) {
-      setInputMode("upload");
-      setImageFromFile(file);
-      setError(err instanceof Error ? err.message : "上传失败");
+      if (sessionIdRef.current === sessionId) {
+        setInputMode("upload");
+        setImageFromFile(file);
+        setError(err instanceof Error ? err.message : "上传失败");
+      }
     } finally {
-      setBusy("idle");
+      setJob(sessionId, null);
     }
   }
 
   async function handleCritiqueOnly() {
     if (!session || !activeIteration) return;
-    setBusy("critique");
+    if (jobs[session.id]) {
+      setError("当前任务正在处理中");
+      return;
+    }
+    const sessionId = session.id;
+    const iterationId = activeIteration.id;
+    setJob(sessionId, "critique");
     setError(null);
     try {
-      const withCritique = await runCritique(session.id, activeIteration.id);
-      setSession(withCritique);
+      const withCritique = await runCritique(
+        sessionId,
+        iterationId,
+        session,
+      );
+      applySessionIfActive(withCritique, iterationId);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "评审失败");
+      if (sessionIdRef.current === sessionId) {
+        setError(err instanceof Error ? err.message : "评审失败");
+      }
     } finally {
-      setBusy("idle");
+      setJob(sessionId, null);
     }
   }
 
   async function handleDelete(id: string) {
+    if (jobs[id]) {
+      setError("该任务正在处理中，暂不能删除");
+      return;
+    }
     if (!confirm("确认删除该任务及其全部图片？")) return;
     try {
       await apiJson(`/api/sessions/${id}`, { method: "DELETE" });
@@ -328,10 +418,8 @@ export function Workbench() {
     }
   }
 
-  const isBusy = busy !== "idle";
-
   function handlePaste(event: React.ClipboardEvent) {
-    if (!session || isBusy || inputMode !== "upload") return;
+    if (!session || isCurrentBusy || inputMode !== "upload") return;
     const items = event.clipboardData?.items;
     if (!items) return;
     for (const item of items) {
@@ -348,7 +436,7 @@ export function Workbench() {
 
   function handleDrop(event: React.DragEvent) {
     event.preventDefault();
-    if (!session || isBusy || inputMode !== "upload") return;
+    if (!session || isCurrentBusy || inputMode !== "upload") return;
     const file = event.dataTransfer.files?.[0];
     if (file) setImageFromFile(file);
   }
@@ -389,10 +477,13 @@ export function Workbench() {
           <button
             type="button"
             onClick={() => setTaskModalOpen(true)}
-            disabled={busy === "load"}
+            disabled={switching}
             className="shrink-0 rounded-lg border border-[var(--line)] bg-white px-3 py-1.5 text-sm font-medium text-[var(--ink)] transition hover:border-[var(--accent)] hover:text-[var(--accent)] disabled:opacity-50"
           >
             任务管理
+            {Object.keys(jobs).length > 0
+              ? ` · ${Object.keys(jobs).length} 处理中`
+              : ""}
           </button>
         </div>
       </header>
@@ -416,7 +507,9 @@ export function Workbench() {
             iterations={session?.iterations ?? []}
             activeId={activeIteration?.id ?? null}
             onSelect={setActiveIterationId}
-            loading={busy === "generate" || busy === "critique"}
+            loading={
+              currentJob === "generate" || currentJob === "critique"
+            }
             taskTitle={session ? titleDraft : undefined}
           />
         </aside>
@@ -426,16 +519,23 @@ export function Workbench() {
             <ImageStage
               iteration={activeIteration}
               index={Math.max(activeIndex, 0)}
-              loading={busy === "generate" || busy === "critique"}
+              loading={
+                currentJob === "generate" || currentJob === "critique"
+              }
               hasSession={Boolean(session)}
             />
           </div>
 
           <div className="shrink-0 border-t border-[var(--line)] bg-[var(--surface)] p-3">
+            {backgroundJobCount > 0 && (
+              <p className="mb-2 text-[11px] text-[var(--muted)]">
+                另有 {backgroundJobCount} 个任务在后台处理，可继续操作当前任务
+              </p>
+            )}
             <div className="mb-2 flex gap-1 rounded-lg bg-[var(--surface-strong)] p-1">
               <button
                 type="button"
-                disabled={!session || isBusy}
+                disabled={!session || isCurrentBusy}
                 onClick={() => switchInputMode("prompt")}
                 className={`flex-1 rounded-md px-3 py-1 text-sm transition disabled:opacity-50 ${
                   inputMode === "prompt"
@@ -447,7 +547,7 @@ export function Workbench() {
               </button>
               <button
                 type="button"
-                disabled={!session || isBusy}
+                disabled={!session || isCurrentBusy}
                 onClick={() => switchInputMode("upload")}
                 className={`flex-1 rounded-md px-3 py-1 text-sm transition disabled:opacity-50 ${
                   inputMode === "upload"
@@ -466,7 +566,7 @@ export function Workbench() {
                   value={promptDraft}
                   onChange={(event) => setPromptDraft(event.target.value)}
                   rows={2}
-                  disabled={isBusy || !session}
+                  disabled={isCurrentBusy || !session}
                   placeholder={
                     !session
                       ? "请先打开「任务管理」新建或切换任务"
@@ -478,13 +578,13 @@ export function Workbench() {
                 />
                 <button
                   type="button"
-                  disabled={isBusy || !session}
+                  disabled={isCurrentBusy || !session}
                   onClick={() => void handleGenerate(promptDraft)}
                   className="shrink-0 self-stretch rounded-lg bg-[var(--accent)] px-3 text-sm font-medium text-white transition hover:bg-[var(--accent-hover)] disabled:opacity-50"
                 >
-                  {busy === "generate"
+                  {currentJob === "generate"
                     ? "生图中…"
-                    : busy === "critique"
+                    : currentJob === "critique"
                       ? "评审中…"
                       : "提交并评审"}
                 </button>
@@ -513,7 +613,7 @@ export function Workbench() {
                       <button
                         type="button"
                         onClick={clearPendingImage}
-                        disabled={isBusy}
+                        disabled={isCurrentBusy}
                         className="text-xs text-[var(--accent)] underline disabled:opacity-50"
                       >
                         移除
@@ -521,13 +621,13 @@ export function Workbench() {
                     </div>
                     <button
                       type="button"
-                      disabled={isBusy || !session}
+                      disabled={isCurrentBusy || !session}
                       onClick={() => void handleUploadAndCritique()}
                       className="shrink-0 rounded-lg bg-[var(--accent)] px-3 py-2 text-sm font-medium text-white transition hover:bg-[var(--accent-hover)] disabled:opacity-50"
                     >
-                      {busy === "generate" || busy === "load"
+                      {currentJob === "generate"
                         ? "上传中…"
-                        : busy === "critique"
+                        : currentJob === "critique"
                           ? "评审中…"
                           : "提交并评审"}
                     </button>
@@ -535,7 +635,7 @@ export function Workbench() {
                 ) : (
                   <button
                     type="button"
-                    disabled={!session || isBusy}
+                    disabled={!session || isCurrentBusy}
                     onClick={() => fileInputRef.current?.click()}
                     className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-[var(--line)] bg-white px-3 py-3 text-sm text-[var(--muted)] transition hover:border-[var(--accent)] hover:text-[var(--accent)] disabled:opacity-50"
                   >
@@ -572,7 +672,7 @@ export function Workbench() {
               requestAnimationFrame(() => promptRef.current?.focus());
             }}
             onCritiqueOnly={() => void handleCritiqueOnly()}
-            disabled={isBusy}
+            disabled={isCurrentBusy}
             hasImage={Boolean(activeIteration)}
           />
         </aside>
@@ -586,7 +686,8 @@ export function Workbench() {
         onSelect={(id) => void loadSession(id)}
         onCreate={(input) => void handleCreateSession(input)}
         onDelete={(id) => void handleDelete(id)}
-        busy={isBusy}
+        creating={creating}
+        jobLabels={jobLabels}
       />
     </div>
   );

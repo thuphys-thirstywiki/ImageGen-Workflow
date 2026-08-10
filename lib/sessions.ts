@@ -351,8 +351,33 @@ export async function updateIterationCritique(
   sessionId: string,
   iterationId: string,
   critique: Iteration["critique"],
+  fallbackSession?: Session,
 ): Promise<Session> {
-  const session = await getSession(sessionId);
+  let session: Session | null = null;
+  try {
+    session = await getSessionWithIteration(sessionId, iterationId, 8);
+  } catch {
+    if (
+      fallbackSession &&
+      fallbackSession.id === sessionId &&
+      fallbackSession.iterations.some((item) => item.id === iterationId)
+    ) {
+      // Blob read may lag right after upload/generate; merge from the just-written snapshot.
+      const fresh = await getSession(sessionId);
+      if (fresh) {
+        const missing = fallbackSession.iterations.filter(
+          (item) => !fresh.iterations.some((existing) => existing.id === item.id),
+        );
+        session = {
+          ...fresh,
+          iterations: [...fresh.iterations, ...missing],
+        };
+      } else {
+        session = normalizeSession(fallbackSession);
+      }
+    }
+  }
+
   if (!session) {
     throw new Error("任务不存在");
   }
@@ -369,7 +394,7 @@ export async function updateIterationCritique(
 export async function getSessionWithIteration(
   sessionId: string,
   iterationId: string,
-  attempts = 5,
+  attempts = 8,
 ): Promise<Session> {
   let last: Session | null = null;
   for (let i = 0; i < attempts; i++) {
@@ -378,11 +403,21 @@ export async function getSessionWithIteration(
       return last;
     }
     if (i < attempts - 1) {
-      await new Promise((resolve) => setTimeout(resolve, 200 * (i + 1)));
+      await new Promise((resolve) => setTimeout(resolve, 250 * (i + 1)));
     }
   }
   if (!last) {
     throw new Error("任务不存在");
   }
   throw new Error("迭代不存在");
+}
+
+export function sessionHasIteration(
+  session: Session | null | undefined,
+  iterationId: string,
+): session is Session {
+  return Boolean(
+    session &&
+      session.iterations.some((item) => item.id === iterationId),
+  );
 }

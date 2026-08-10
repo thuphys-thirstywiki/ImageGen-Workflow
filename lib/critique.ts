@@ -171,6 +171,11 @@ ${history}
   }
 
   const critique = normalizeCritique(extractJson(content));
-  const updated = await updateIterationCritique(session.id, iterationId, critique);
+  const updated = await updateIterationCritique(
+    session.id,
+    iterationId,
+    critique,
+    session,
+  );
   return { session: updated, critique };
 }
