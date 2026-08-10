@@ -513,22 +513,6 @@ export function Workbench() {
     }
   }
 
-  function handlePaste(event: React.ClipboardEvent) {
-    if (!session || isCurrentBusy || inputMode !== "upload") return;
-    const items = event.clipboardData?.items;
-    if (!items) return;
-    for (const item of items) {
-      if (item.type.startsWith("image/")) {
-        const file = item.getAsFile();
-        if (file) {
-          event.preventDefault();
-          setImageFromFile(file);
-        }
-        break;
-      }
-    }
-  }
-
   function handleDrop(event: React.DragEvent) {
     event.preventDefault();
     if (!session || isCurrentBusy || inputMode !== "upload") return;
@@ -546,6 +530,28 @@ export function Workbench() {
       setPromptDraft("");
     }
   }
+
+  // Accept image paste globally so focus need not be on the upload dropzone.
+  useEffect(() => {
+    if (!session || isCurrentBusy) return;
+
+    function onWindowPaste(event: ClipboardEvent) {
+      const items = event.clipboardData?.items;
+      if (!items) return;
+      for (const item of Array.from(items)) {
+        if (!item.type.startsWith("image/")) continue;
+        const file = item.getAsFile();
+        if (!file) continue;
+        event.preventDefault();
+        setInputMode("upload");
+        setImageFromFile(file);
+        break;
+      }
+    }
+
+    window.addEventListener("paste", onWindowPaste);
+    return () => window.removeEventListener("paste", onWindowPaste);
+  }, [session, isCurrentBusy, setImageFromFile]);
 
   function dismissError() {
     setError(null);
@@ -601,7 +607,7 @@ export function Workbench() {
         </div>
       )}
 
-      <div className="grid min-h-0 flex-1 grid-cols-[240px_minmax(0,1fr)_300px] overflow-hidden">
+      <div className="grid min-h-0 flex-1 grid-cols-[220px_minmax(0,1fr)_380px] overflow-hidden">
         <aside className="min-h-0 overflow-hidden border-r border-[var(--line)]">
           <IterationTimeline
             iterations={session?.iterations ?? []}
@@ -661,7 +667,7 @@ export function Workbench() {
                   ref={promptRef}
                   value={promptDraft}
                   onChange={(event) => setPromptDraft(event.target.value)}
-                  rows={2}
+                  rows={5}
                   disabled={isCurrentBusy || !session}
                   placeholder={
                     !session
@@ -670,7 +676,7 @@ export function Workbench() {
                         ? "描述画面、风格、构图、文字元素…"
                         : "完整方案或修改建议…"
                   }
-                  className="min-w-0 flex-1 resize-none rounded-xl border border-[var(--line)] bg-white px-3 py-2 text-sm leading-relaxed outline-none focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent)]/15 disabled:opacity-60"
+                  className="min-h-[7.5rem] min-w-0 flex-1 resize-y rounded-xl border border-[var(--line)] bg-white px-3 py-2 text-sm leading-relaxed outline-none focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent)]/15 disabled:opacity-60"
                 />
                 <button
                   type="button"
@@ -689,8 +695,6 @@ export function Workbench() {
               <div
                 onDragOver={(event) => event.preventDefault()}
                 onDrop={handleDrop}
-                onPaste={handlePaste}
-                tabIndex={0}
                 className="outline-none"
               >
                 {pendingImage ? (
