@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AdminPasswordDialog } from "@/components/AdminPasswordDialog";
 import { CritiquePanel } from "@/components/CritiquePanel";
 import { ImageStage } from "@/components/ImageStage";
 import { IterationTimeline } from "@/components/IterationTimeline";
@@ -10,6 +11,17 @@ import type { Session, SessionSummary } from "@/lib/types";
 
 type BusyKind = "generate" | "critique" | "load";
 type InputMode = "prompt" | "upload";
+type AdminAction =
+  | { type: "delete"; sessionId: string; title: string }
+  | { type: "reset-quota" }
+  | null;
+
+type QuotaState = {
+  imageRemaining: number;
+  critiqueRemaining: number;
+  imageLimit: number;
+  critiqueLimit: number;
+};
 
 type PendingImage = {
   file: File;
@@ -68,6 +80,9 @@ export function Workbench() {
   const [switching, setSwitching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [taskModalOpen, setTaskModalOpen] = useState(false);
+  const [quota, setQuota] = useState<QuotaState | null>(null);
+  const [adminAction, setAdminAction] = useState<AdminAction>(null);
+  const [adminBusy, setAdminBusy] = useState(false);
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const sessionIdRef = useRef<string | null>(null);
@@ -201,6 +216,11 @@ export function Workbench() {
     setSessions(data.sessions);
   }, []);
 
+  const refreshQuota = useCallback(async () => {
+    const data = await apiJson<{ quota: QuotaState }>("/api/quota");
+    setQuota(data.quota);
+  }, []);
+
   const loadSession = useCallback(
     async (id: string) => {
       const seq = ++loadSeqRef.current;
@@ -252,12 +272,12 @@ export function Workbench() {
   useEffect(() => {
     void (async () => {
       try {
-        await refreshList();
+        await Promise.all([refreshList(), refreshQuota()]);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "加载任务列表失败");
+        setError(err instanceof Error ? err.message : "加载失败");
       }
     })();
-  }, [refreshList]);
+  }, [refreshList, refreshQuota]);
 
   useEffect(() => {
     return () => {
@@ -361,7 +381,7 @@ export function Workbench() {
         if (sessionIdRef.current === sessionId) {
           setInputMode("prompt");
         }
-        await refreshList();
+        await Promise.all([refreshList(), refreshQuota()]);
       } catch (critiqueErr) {
         applySessionIfActive(data.session, data.iteration.id);
         const message =
@@ -372,7 +392,7 @@ export function Workbench() {
         if (sessionIdRef.current === sessionId) {
           setInputMode("prompt");
         }
-        await refreshList();
+        await Promise.all([refreshList(), refreshQuota()]);
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : "生图失败";
@@ -380,6 +400,7 @@ export function Workbench() {
       if (sessionIdRef.current === sessionId) {
         setPromptDraft(trimmed);
       }
+      void refreshQuota();
     } finally {
       setJob(sessionId, null);
     }
@@ -439,7 +460,7 @@ export function Workbench() {
         if (sessionIdRef.current === sessionId) {
           setInputMode("prompt");
         }
-        await refreshList();
+        await Promise.all([refreshList(), refreshQuota()]);
       } catch (critiqueErr) {
         applySessionIfActive(data.session, data.iteration.id);
         const message =
@@ -450,7 +471,7 @@ export function Workbench() {
         if (sessionIdRef.current === sessionId) {
           setInputMode("prompt");
         }
-        await refreshList();
+        await Promise.all([refreshList(), refreshQuota()]);
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : "上传失败";
@@ -459,6 +480,7 @@ export function Workbench() {
         setInputMode("upload");
         setImageFromFile(file);
       }
+      void refreshQuota();
     } finally {
       setJob(sessionId, null);
     }
@@ -478,38 +500,62 @@ export function Workbench() {
     try {
       const withCritique = await runCritique(sessionId, iterationId, session);
       applySessionIfActive(withCritique, iterationId);
+      await refreshQuota();
     } catch (err) {
       reportSessionError(
         sessionId,
         err instanceof Error ? err.message : "评审失败",
       );
+      void refreshQuota();
     } finally {
       setJob(sessionId, null);
     }
   }
 
-  async function handleDelete(id: string) {
+  function requestDelete(id: string) {
     if (jobs[id]) {
       setError("该任务正在处理中，暂不能删除");
       return;
     }
-    if (!confirm("确认删除该任务及其全部图片？")) return;
+    const target = sessions.find((item) => item.id === id);
+    setAdminAction({
+      type: "delete",
+      sessionId: id,
+      title: target?.title || id,
+    });
+  }
+
+  async function handleAdminConfirm(adminPassword: string) {
+    if (!adminAction) return;
+    setAdminBusy(true);
     try {
-      await apiJson(`/api/sessions/${id}`, { method: "DELETE" });
-      delete pendingResultsRef.current[id];
-      clearSessionError(id);
-      if (session?.id === id) {
-        ++loadSeqRef.current;
-        setSession(null);
-        setActiveIterationId(null);
-        setTitleDraft("");
-        setPromptDraft("");
-        clearPendingImage();
-        setError(null);
+      if (adminAction.type === "delete") {
+        await apiJson(`/api/sessions/${adminAction.sessionId}`, {
+          method: "DELETE",
+          body: JSON.stringify({ adminPassword }),
+        });
+        delete pendingResultsRef.current[adminAction.sessionId];
+        clearSessionError(adminAction.sessionId);
+        if (session?.id === adminAction.sessionId) {
+          ++loadSeqRef.current;
+          setSession(null);
+          setActiveIterationId(null);
+          setTitleDraft("");
+          setPromptDraft("");
+          clearPendingImage();
+          setError(null);
+        }
+        await refreshList();
+      } else {
+        const data = await apiJson<{ quota: QuotaState }>("/api/quota/reset", {
+          method: "POST",
+          body: JSON.stringify({ adminPassword }),
+        });
+        setQuota(data.quota);
       }
-      await refreshList();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "删除失败");
+      setAdminAction(null);
+    } finally {
+      setAdminBusy(false);
     }
   }
 
@@ -580,17 +626,36 @@ export function Workbench() {
               </p>
             ) : null}
           </div>
-          <button
-            type="button"
-            onClick={() => setTaskModalOpen(true)}
-            disabled={switching}
-            className="shrink-0 rounded-lg border border-[var(--line)] bg-white px-3 py-1.5 text-sm font-medium text-[var(--ink)] transition hover:border-[var(--accent)] hover:text-[var(--accent)] disabled:opacity-50"
-          >
-            任务管理
-            {Object.keys(jobs).length > 0
-              ? ` · ${Object.keys(jobs).length} 处理中`
-              : ""}
-          </button>
+          <div className="flex shrink-0 items-center gap-2">
+            {quota && (
+              <div className="hidden items-center gap-2 sm:flex">
+                <span className="rounded-md border border-[var(--line)] bg-white px-2.5 py-1 text-xs text-[var(--muted)]">
+                  生图 {quota.imageRemaining}/{quota.imageLimit}
+                </span>
+                <span className="rounded-md border border-[var(--line)] bg-white px-2.5 py-1 text-xs text-[var(--muted)]">
+                  评审 {quota.critiqueRemaining}/{quota.critiqueLimit}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setAdminAction({ type: "reset-quota" })}
+                  className="rounded-md border border-[var(--line)] bg-white px-2.5 py-1 text-xs text-[var(--ink)] transition hover:border-[var(--accent)] hover:text-[var(--accent)]"
+                >
+                  重置余额
+                </button>
+              </div>
+            )}
+            <button
+              type="button"
+              onClick={() => setTaskModalOpen(true)}
+              disabled={switching}
+              className="shrink-0 rounded-lg border border-[var(--line)] bg-white px-3 py-1.5 text-sm font-medium text-[var(--ink)] transition hover:border-[var(--accent)] hover:text-[var(--accent)] disabled:opacity-50"
+            >
+              任务管理
+              {Object.keys(jobs).length > 0
+                ? ` · ${Object.keys(jobs).length} 处理中`
+                : ""}
+            </button>
+          </div>
         </div>
       </header>
 
@@ -785,9 +850,29 @@ export function Workbench() {
         onClose={() => setTaskModalOpen(false)}
         onSelect={(id) => void loadSession(id)}
         onCreate={(input) => void handleCreateSession(input)}
-        onDelete={(id) => void handleDelete(id)}
+        onDelete={requestDelete}
         creating={creating}
         jobLabels={jobLabels}
+      />
+
+      <AdminPasswordDialog
+        open={Boolean(adminAction)}
+        title={
+          adminAction?.type === "delete"
+            ? "删除任务"
+            : "重置 API 余额"
+        }
+        description={
+          adminAction?.type === "delete"
+            ? `确认删除「${adminAction.title}」及其全部图片？此操作需要管理员密码。`
+            : `将生图余额重置为 ${quota?.imageLimit ?? 30}，评审余额重置为 ${quota?.critiqueLimit ?? 100}。`
+        }
+        confirmLabel={adminAction?.type === "delete" ? "删除" : "重置"}
+        busy={adminBusy}
+        onClose={() => {
+          if (!adminBusy) setAdminAction(null);
+        }}
+        onConfirm={handleAdminConfirm}
       />
     </div>
   );

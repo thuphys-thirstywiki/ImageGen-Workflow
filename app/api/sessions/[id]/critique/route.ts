@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { critiqueIteration } from "@/lib/critique";
 import { publicErrorMessage } from "@/lib/errors";
+import { consumeQuota, refundQuota } from "@/lib/quota";
 import {
   getSessionWithIteration,
   sessionHasIteration,
@@ -32,6 +33,7 @@ function asSnapshot(
 }
 
 export async function POST(request: Request, context: RouteContext) {
+  let charged = false;
   try {
     const { id } = await context.params;
     const body = (await request.json().catch(() => ({}))) as {
@@ -60,6 +62,9 @@ export async function POST(request: Request, context: RouteContext) {
       }
     }
 
+    await consumeQuota("critique");
+    charged = true;
+
     const { session: updated, critique } = await critiqueIteration(
       session,
       iterationId,
@@ -67,7 +72,15 @@ export async function POST(request: Request, context: RouteContext) {
 
     return NextResponse.json({ session: updated, critique, iterationId });
   } catch (error) {
+    if (charged) {
+      try {
+        await refundQuota("critique");
+      } catch {
+        // ignore refund failures
+      }
+    }
     const message = publicErrorMessage(error, "评审失败");
-    return NextResponse.json({ error: message }, { status: 500 });
+    const status = message.includes("余额不足") ? 402 : 500;
+    return NextResponse.json({ error: message }, { status });
   }
 }

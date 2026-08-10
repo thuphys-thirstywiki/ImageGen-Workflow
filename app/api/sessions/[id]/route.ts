@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
+import { assertAdminPassword } from "@/lib/admin";
 import { deleteSession, getSession } from "@/lib/sessions";
+import { publicErrorMessage } from "@/lib/errors";
 
 export const runtime = "nodejs";
 
@@ -19,8 +21,13 @@ export async function GET(_request: Request, context: RouteContext) {
   }
 }
 
-export async function DELETE(_request: Request, context: RouteContext) {
+export async function DELETE(request: Request, context: RouteContext) {
   try {
+    const body = (await request.json().catch(() => ({}))) as {
+      adminPassword?: string;
+    };
+    assertAdminPassword(body.adminPassword);
+
     const { id } = await context.params;
     const ok = await deleteSession(id);
     if (!ok) {
@@ -28,7 +35,8 @@ export async function DELETE(_request: Request, context: RouteContext) {
     }
     return NextResponse.json({ ok: true });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "删除任务失败";
-    return NextResponse.json({ error: message }, { status: 500 });
+    const message = publicErrorMessage(error, "删除任务失败");
+    const status = message.includes("密码") ? 401 : 500;
+    return NextResponse.json({ error: message }, { status });
   }
 }
