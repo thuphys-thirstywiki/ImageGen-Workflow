@@ -1,6 +1,9 @@
 export function imageUrl(imagePath?: string): string | undefined {
   if (!imagePath) return undefined;
-  if (/^https?:\/\//i.test(imagePath)) return imagePath;
+  if (/^https?:\/\//i.test(imagePath)) {
+    // Same-origin proxy so copy/download are not blocked by Blob CORS.
+    return `/api/images/remote?u=${encodeURIComponent(imagePath)}`;
+  }
   return `/api/images/${imagePath.split("/").map(encodeURIComponent).join("/")}`;
 }
 
