@@ -16,6 +16,11 @@ type PendingImage = {
   previewUrl: string;
 };
 
+type PendingResult = {
+  session: Session;
+  iterationId?: string | null;
+};
+
 function jobLabel(kind: BusyKind): string {
   if (kind === "generate") return "生图 / 上传中…";
   if (kind === "critique") return "评审中…";
@@ -32,6 +37,16 @@ function mergeProposalDrafts(session: Session): Record<string, string> {
   return drafts;
 }
 
+function isFresher(candidate: Session, baseline: Session): boolean {
+  if (candidate.iterations.length !== baseline.iterations.length) {
+    return candidate.iterations.length > baseline.iterations.length;
+  }
+  return (
+    new Date(candidate.updatedAt).getTime() >=
+    new Date(baseline.updatedAt).getTime()
+  );
+}
+
 export function Workbench() {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [session, setSession] = useState<Session | null>(null);
@@ -46,6 +61,9 @@ export function Workbench() {
     {},
   );
   const [jobs, setJobs] = useState<Record<string, BusyKind>>({});
+  const [sessionErrors, setSessionErrors] = useState<Record<string, string>>(
+    {},
+  );
   const [creating, setCreating] = useState(false);
   const [switching, setSwitching] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -53,6 +71,8 @@ export function Workbench() {
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const sessionIdRef = useRef<string | null>(null);
+  const loadSeqRef = useRef(0);
+  const pendingResultsRef = useRef<Record<string, PendingResult>>({});
 
   sessionIdRef.current = session?.id ?? null;
 
@@ -77,6 +97,8 @@ export function Workbench() {
   const backgroundJobCount = Object.keys(jobs).filter(
     (id) => id !== session?.id,
   ).length;
+  const visibleError =
+    error || (session ? sessionErrors[session.id] : undefined) || null;
 
   const jobLabels = useMemo(() => {
     const labels: Record<string, string> = {};
@@ -98,12 +120,55 @@ export function Workbench() {
     });
   }, []);
 
+  const clearSessionError = useCallback((sessionId: string) => {
+    setSessionErrors((prev) => {
+      if (!(sessionId in prev)) return prev;
+      const next = { ...prev };
+      delete next[sessionId];
+      return next;
+    });
+  }, []);
+
+  const reportSessionError = useCallback(
+    (sessionId: string, message: string) => {
+      setSessionErrors((prev) => ({ ...prev, [sessionId]: message }));
+      if (sessionIdRef.current === sessionId) {
+        setError(message);
+      }
+    },
+    [],
+  );
+
+  const sessionErrorsRef = useRef(sessionErrors);
+  sessionErrorsRef.current = sessionErrors;
+
+  const showView = useCallback((next: Session, iterationId?: string | null) => {
+    setSession(next);
+    setTitleDraft(next.title);
+    setProposalDrafts(mergeProposalDrafts(next));
+    if (iterationId) {
+      setActiveIterationId(iterationId);
+    } else {
+      const latest = next.iterations[next.iterations.length - 1];
+      setActiveIterationId(latest?.id ?? null);
+    }
+    setError(sessionErrorsRef.current[next.id] ?? null);
+  }, []);
+
   const applySessionIfActive = useCallback(
     (updated: Session, iterationId?: string | null) => {
-      if (sessionIdRef.current !== updated.id) return;
+      if (sessionIdRef.current !== updated.id) {
+        // Job finished while user is elsewhere — keep result for when they return.
+        pendingResultsRef.current[updated.id] = {
+          session: updated,
+          iterationId,
+        };
+        return;
+      }
+      delete pendingResultsRef.current[updated.id];
       setSession(updated);
       setTitleDraft(updated.title);
-      setProposalDrafts((prev) => ({ ...prev, ...mergeProposalDrafts(updated) }));
+      setProposalDrafts(mergeProposalDrafts(updated));
       if (iterationId) {
         setActiveIterationId(iterationId);
       }
@@ -138,27 +203,50 @@ export function Workbench() {
 
   const loadSession = useCallback(
     async (id: string) => {
+      const seq = ++loadSeqRef.current;
       setSwitching(true);
       setError(null);
+      setPromptDraft("");
+      clearPendingImage();
+      setInputMode("prompt");
+      setTaskModalOpen(false);
+
+      // Instantly show a background-job result if we already have one.
+      const eager = pendingResultsRef.current[id];
+      if (eager && seq === loadSeqRef.current) {
+        showView(eager.session, eager.iterationId);
+      }
+
       try {
         const data = await apiJson<{ session: Session }>(`/api/sessions/${id}`);
-        setSession(data.session);
-        setTitleDraft(data.session.title);
-        const latest =
-          data.session.iterations[data.session.iterations.length - 1];
-        setActiveIterationId(latest?.id ?? null);
-        setProposalDrafts(mergeProposalDrafts(data.session));
-        setPromptDraft("");
-        clearPendingImage();
-        setInputMode("prompt");
-        setTaskModalOpen(false);
+        if (seq !== loadSeqRef.current) {
+          return;
+        }
+
+        const pending = pendingResultsRef.current[id];
+        let next = data.session;
+        let iterationId: string | null | undefined =
+          next.iterations[next.iterations.length - 1]?.id ?? null;
+
+        if (pending && isFresher(pending.session, data.session)) {
+          next = pending.session;
+          iterationId = pending.iterationId;
+        }
+        delete pendingResultsRef.current[id];
+        showView(next, iterationId);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "加载失败");
+        if (seq !== loadSeqRef.current) return;
+        // Keep eager view if we already showed a pending result.
+        if (!eager) {
+          setError(err instanceof Error ? err.message : "加载失败");
+        }
       } finally {
-        setSwitching(false);
+        if (seq === loadSeqRef.current) {
+          setSwitching(false);
+        }
       }
     },
-    [clearPendingImage],
+    [clearPendingImage, showView],
   );
 
   useEffect(() => {
@@ -194,6 +282,7 @@ export function Workbench() {
           description: input.description,
         }),
       });
+      ++loadSeqRef.current; // invalidate in-flight loads
       setSession(created.session);
       setActiveIterationId(null);
       setTitleDraft(created.session.title);
@@ -249,6 +338,7 @@ export function Workbench() {
         : `/api/sessions/${sessionId}/iterate`;
 
     setJob(sessionId, "generate");
+    clearSessionError(sessionId);
     setError(null);
     setPromptDraft("");
     try {
@@ -274,20 +364,21 @@ export function Workbench() {
         await refreshList();
       } catch (critiqueErr) {
         applySessionIfActive(data.session, data.iteration.id);
+        const message =
+          critiqueErr instanceof Error
+            ? `图片已生成，但评审失败：${critiqueErr.message}`
+            : "图片已生成，但评审失败；可点「仅重新评审」重试";
+        reportSessionError(sessionId, message);
         if (sessionIdRef.current === sessionId) {
           setInputMode("prompt");
-          setError(
-            critiqueErr instanceof Error
-              ? `图片已生成，但评审失败：${critiqueErr.message}`
-              : "图片已生成，但评审失败；可点「仅重新评审」重试",
-          );
         }
         await refreshList();
       }
     } catch (err) {
+      const message = err instanceof Error ? err.message : "生图失败";
+      reportSessionError(sessionId, message);
       if (sessionIdRef.current === sessionId) {
         setPromptDraft(trimmed);
-        setError(err instanceof Error ? err.message : "生图失败");
       }
     } finally {
       setJob(sessionId, null);
@@ -312,6 +403,7 @@ export function Workbench() {
     const sessionId = session.id;
     const file = pendingImage.file;
     setJob(sessionId, "generate");
+    clearSessionError(sessionId);
     setError(null);
     clearPendingImage();
 
@@ -350,21 +442,22 @@ export function Workbench() {
         await refreshList();
       } catch (critiqueErr) {
         applySessionIfActive(data.session, data.iteration.id);
+        const message =
+          critiqueErr instanceof Error
+            ? `图片已上传，但评审失败：${critiqueErr.message}`
+            : "图片已上传，但评审失败；可点「仅重新评审」重试";
+        reportSessionError(sessionId, message);
         if (sessionIdRef.current === sessionId) {
           setInputMode("prompt");
-          setError(
-            critiqueErr instanceof Error
-              ? `图片已上传，但评审失败：${critiqueErr.message}`
-              : "图片已上传，但评审失败；可点「仅重新评审」重试",
-          );
         }
         await refreshList();
       }
     } catch (err) {
+      const message = err instanceof Error ? err.message : "上传失败";
+      reportSessionError(sessionId, message);
       if (sessionIdRef.current === sessionId) {
         setInputMode("upload");
         setImageFromFile(file);
-        setError(err instanceof Error ? err.message : "上传失败");
       }
     } finally {
       setJob(sessionId, null);
@@ -380,18 +473,16 @@ export function Workbench() {
     const sessionId = session.id;
     const iterationId = activeIteration.id;
     setJob(sessionId, "critique");
+    clearSessionError(sessionId);
     setError(null);
     try {
-      const withCritique = await runCritique(
-        sessionId,
-        iterationId,
-        session,
-      );
+      const withCritique = await runCritique(sessionId, iterationId, session);
       applySessionIfActive(withCritique, iterationId);
     } catch (err) {
-      if (sessionIdRef.current === sessionId) {
-        setError(err instanceof Error ? err.message : "评审失败");
-      }
+      reportSessionError(
+        sessionId,
+        err instanceof Error ? err.message : "评审失败",
+      );
     } finally {
       setJob(sessionId, null);
     }
@@ -405,12 +496,16 @@ export function Workbench() {
     if (!confirm("确认删除该任务及其全部图片？")) return;
     try {
       await apiJson(`/api/sessions/${id}`, { method: "DELETE" });
+      delete pendingResultsRef.current[id];
+      clearSessionError(id);
       if (session?.id === id) {
+        ++loadSeqRef.current;
         setSession(null);
         setActiveIterationId(null);
         setTitleDraft("");
         setPromptDraft("");
         clearPendingImage();
+        setError(null);
       }
       await refreshList();
     } catch (err) {
@@ -452,6 +547,11 @@ export function Workbench() {
     }
   }
 
+  function dismissError() {
+    setError(null);
+    if (session) clearSessionError(session.id);
+  }
+
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-[var(--bg)] text-[var(--ink)]">
       <header className="relative z-10 shrink-0 border-b border-[var(--line)] bg-[var(--surface)]/95">
@@ -488,13 +588,13 @@ export function Workbench() {
         </div>
       </header>
 
-      {error && (
+      {visibleError && (
         <div className="shrink-0 border-b border-red-200 bg-red-50 px-4 py-1.5 text-sm text-red-700">
-          {error}
+          {visibleError}
           <button
             type="button"
             className="ml-3 underline"
-            onClick={() => setError(null)}
+            onClick={dismissError}
           >
             关闭
           </button>
@@ -507,9 +607,7 @@ export function Workbench() {
             iterations={session?.iterations ?? []}
             activeId={activeIteration?.id ?? null}
             onSelect={setActiveIterationId}
-            loading={
-              currentJob === "generate" || currentJob === "critique"
-            }
+            loading={currentJob === "generate" || currentJob === "critique"}
             taskTitle={session ? titleDraft : undefined}
           />
         </aside>
@@ -519,9 +617,7 @@ export function Workbench() {
             <ImageStage
               iteration={activeIteration}
               index={Math.max(activeIndex, 0)}
-              loading={
-                currentJob === "generate" || currentJob === "critique"
-              }
+              loading={currentJob === "generate" || currentJob === "critique"}
               hasSession={Boolean(session)}
             />
           </div>
