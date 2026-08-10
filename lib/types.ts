@@ -2,9 +2,12 @@ export type Proposal = {
   id: string;
   title: string;
   prompt: string;
+  /** refine = 在现有基础上改进；rework = 大改一版 */
+  kind?: "refine" | "rework";
 };
 
 export type Critique = {
+  /** Brief overall note; secondary to actionable suggestions. */
   summary: string;
   improvements: string[];
   proposals: Proposal[];
