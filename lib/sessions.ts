@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { del, list, put } from "@vercel/blob";
+import { del, get, list, put } from "@vercel/blob";
 import { promises as fs } from "fs";
 import path from "path";
 import type { Iteration, Session, SessionSummary } from "./types";
@@ -93,12 +93,15 @@ async function writeLocalSession(session: Session): Promise<void> {
 
 async function readBlobSession(sessionId: string): Promise<Session | null> {
   const key = sessionBlobKey(sessionId);
-  const listed = await list({ prefix: key, limit: 1 });
-  const hit = listed.blobs.find((blob) => blob.pathname === key);
-  if (!hit) return null;
-  const response = await fetch(hit.url);
-  if (!response.ok) return null;
-  return (await response.json()) as Session;
+  // Bypass CDN so a just-written session.json is visible to the next request
+  // (generate → critique). Cached public URLs often lag and look like “迭代不存在”.
+  const result = await get(key, { access: "public", useCache: false });
+  if (!result || result.statusCode !== 200 || !result.stream) {
+    return null;
+  }
+  const text = await new Response(result.stream).text();
+  if (!text.trim()) return null;
+  return JSON.parse(text) as Session;
 }
 
 async function writeBlobSession(session: Session): Promise<void> {
@@ -107,6 +110,8 @@ async function writeBlobSession(session: Session): Promise<void> {
     addRandomSuffix: false,
     allowOverwrite: true,
     contentType: "application/json",
+    // Shortest allowed cache; reads still use useCache:false for correctness.
+    cacheControlMaxAge: 60,
   });
 }
 
@@ -350,4 +355,26 @@ export async function updateIterationCritique(
   iteration.critique = critique;
   await saveSession(session);
   return session;
+}
+
+/** Wait briefly for a newly written iteration to become readable from Blob. */
+export async function getSessionWithIteration(
+  sessionId: string,
+  iterationId: string,
+  attempts = 5,
+): Promise<Session> {
+  let last: Session | null = null;
+  for (let i = 0; i < attempts; i++) {
+    last = await getSession(sessionId);
+    if (last?.iterations.some((item) => item.id === iterationId)) {
+      return last;
+    }
+    if (i < attempts - 1) {
+      await new Promise((resolve) => setTimeout(resolve, 200 * (i + 1)));
+    }
+  }
+  if (!last) {
+    throw new Error("任务不存在");
+  }
+  throw new Error("迭代不存在");
 }
