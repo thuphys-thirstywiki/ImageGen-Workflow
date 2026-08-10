@@ -1,0 +1,53 @@
+@import "tailwindcss";
+
+:root {
+  --bg: #eef1f4;
+  --surface: #fbfcfd;
+  --surface-strong: #e7ecef;
+  --canvas: #e4e9ee;
+  --ink: #1b232c;
+  --muted: #6b7785;
+  --line: #d5dde5;
+  --accent: #0d7377;
+  --accent-hover: #0a5c5f;
+  --font-display: "Avenir Next", "Segoe UI", "PingFang SC", "Helvetica Neue",
+    sans-serif;
+  --font-body: "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+    sans-serif;
+}
+
+@theme inline {
+  --color-background: var(--bg);
+  --color-foreground: var(--ink);
+  --font-sans: var(--font-body);
+}
+
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-body), "Segoe UI", sans-serif;
+}
+
+.font-display {
+  font-family: var(--font-display), var(--font-body), sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #c5ced8;
+  border-radius: 999px;
+}

@@ -1,0 +1,18 @@
+services:
+  web:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      VAPI_KEY: ${VAPI_KEY}
+      VAPI_BASE: ${VAPI_BASE}
+      IMAGE_MODEL: ${IMAGE_MODEL:-gpt-image-2-c}
+      VLM_MODEL: ${VLM_MODEL:-gpt-5}
+      ACCESS_CODE: ${ACCESS_CODE:-}
+      DATA_DIR: /data/sessions
+    volumes:
+      - igw-data:/data
+    restart: unless-stopped
+
+volumes:
+  igw-data:

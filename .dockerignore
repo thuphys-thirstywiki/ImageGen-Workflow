@@ -1,0 +1,15 @@
+node_modules
+.next
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+data/sessions/*
+!data/sessions/.gitkeep
+README.md
+Dockerfile
+docker-compose.yml
+*.md
+AGENTS.md
+CLAUDE.md
