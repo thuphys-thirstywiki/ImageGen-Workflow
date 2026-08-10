@@ -5,6 +5,7 @@ import {
   readImageBuffer,
   updateIterationCritique,
 } from "./sessions";
+import { formatSessionContext } from "./task-context";
 import type { Critique, Proposal, Session } from "./types";
 
 const CRITIQUE_SYSTEM = `你是一位资深视觉设计师与创意总监。你的核心职责不是长篇点评现状，而是给出可落地的改进路径，并产出可直接用于下一轮文生图的方案。
@@ -126,12 +127,12 @@ export async function critiqueIteration(
     )
     .join("\n");
 
-  const userText = `设计任务：${session.title}
+  const userText = `${formatSessionContext(session)}
 
 迭代历史：
 ${history}
 
-请审阅当前这张图。把精力放在「改进建议」和「下一轮完整方案」上；总体评价只要一两句。方案需同时覆盖「在现有基础上改进」与「大改一版」，比例由你根据当前问题自行决定。`;
+请审阅当前这张图是否契合上述任务基本描述与目标。把精力放在「改进建议」和「下一轮完整方案」上；总体评价只要一两句。方案需同时覆盖「在现有基础上改进」与「大改一版」，比例由你根据当前问题自行决定；所有方案都必须继续服务同一任务描述。`;
 
   const client = createOpenAIClient();
   const model = getVlmModel();

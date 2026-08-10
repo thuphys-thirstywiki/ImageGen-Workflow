@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import type { ImagesResponse } from "openai/resources/images";
 import { createOpenAIClient, getImageModel } from "./openai";
 import { appendIteration, getSession, saveImageBuffer } from "./sessions";
+import { formatSessionContext } from "./task-context";
 import type { Iteration, Session } from "./types";
 
 function extFromMime(mime: string | undefined): string {
@@ -30,20 +31,21 @@ export function buildImagePrompt(
   userInput: string,
 ): string {
   const trimmed = userInput.trim();
+  const brief = formatSessionContext(session);
   const history = session.iterations
     .map((item, index) => `第${index + 1}轮：${item.prompt}`)
     .join("\n");
 
   if (!history) {
-    return `设计任务：${session.title}\n\n${trimmed}`;
+    return `${brief}\n\n本轮输入：\n${trimmed}`;
   }
 
-  return `设计任务：${session.title}
+  return `${brief}
 
 以下是此前各轮的设计描述，请作为背景理解当前画面方向：
 ${history}
 
-请根据「本轮输入」生成图片。本轮输入可以是完整方案，也可以是相对上一轮的修改意见；若是修改意见，请在历史方案基础上落实这些修改，并保持整体设计连贯。
+请根据「本轮输入」生成图片。本轮输入可以是完整方案，也可以是相对上一轮的修改意见；若是修改意见，请在历史方案基础上落实这些修改，并保持整体设计连贯，且始终对齐上述任务基本描述。
 
 本轮输入：
 ${trimmed}`;

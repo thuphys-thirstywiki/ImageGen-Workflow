@@ -152,6 +152,7 @@ function normalizeSession(raw: Session): Session {
   return {
     ...raw,
     title: (raw.title || "").trim() || "未命名设计任务",
+    description: (raw.description || "").trim(),
     ownerName: (raw.ownerName || "").trim(),
     iterations: Array.isArray(raw.iterations) ? raw.iterations : [],
   };
@@ -162,6 +163,7 @@ function toSummary(session: Session): SessionSummary {
   return {
     id: session.id,
     title: session.title,
+    description: session.description,
     ownerName: session.ownerName,
     createdAt: session.createdAt,
     updatedAt: session.updatedAt,
@@ -181,20 +183,26 @@ export async function getSession(sessionId: string): Promise<Session | null> {
 export async function createSession(
   title: string,
   ownerName: string,
+  description: string,
 ): Promise<Session> {
   const trimmedTitle = title.trim();
   const trimmedOwner = ownerName.trim();
+  const trimmedDescription = description.trim();
   if (!trimmedTitle) {
     throw new Error("请填写任务名称");
   }
   if (!trimmedOwner) {
     throw new Error("请填写使用者姓名");
   }
+  if (!trimmedDescription) {
+    throw new Error("请填写任务基本描述");
+  }
   const id = randomUUID().replace(/-/g, "").slice(0, 16);
   const now = new Date().toISOString();
   const session: Session = {
     id,
     title: trimmedTitle,
+    description: trimmedDescription,
     ownerName: trimmedOwner,
     createdAt: now,
     updatedAt: now,

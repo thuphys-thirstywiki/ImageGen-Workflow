@@ -12,7 +12,11 @@ type Props = {
   activeId: string | null;
   onClose: () => void;
   onSelect: (id: string) => void;
-  onCreate: (input: { title: string; ownerName: string }) => void | Promise<void>;
+  onCreate: (input: {
+    title: string;
+    ownerName: string;
+    description: string;
+  }) => void | Promise<void>;
   onDelete: (id: string) => void;
   busy?: boolean;
 };
@@ -29,11 +33,13 @@ export function SessionManagerModal({
 }: Props) {
   const [title, setTitle] = useState("");
   const [ownerName, setOwnerName] = useState("");
+  const [description, setDescription] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
     setTitle("");
+    setDescription("");
     setFormError(null);
     try {
       setOwnerName(localStorage.getItem(OWNER_NAME_KEY) || "");
@@ -48,8 +54,9 @@ export function SessionManagerModal({
     event.preventDefault();
     const trimmedTitle = title.trim();
     const trimmedOwner = ownerName.trim();
-    if (!trimmedTitle || !trimmedOwner) {
-      setFormError("请填写任务名称和使用者姓名");
+    const trimmedDescription = description.trim();
+    if (!trimmedTitle || !trimmedOwner || !trimmedDescription) {
+      setFormError("请填写任务名称、使用者姓名和任务基本描述");
       return;
     }
     setFormError(null);
@@ -58,7 +65,11 @@ export function SessionManagerModal({
     } catch {
       // ignore quota / private mode
     }
-    await onCreate({ title: trimmedTitle, ownerName: trimmedOwner });
+    await onCreate({
+      title: trimmedTitle,
+      ownerName: trimmedOwner,
+      description: trimmedDescription,
+    });
   }
 
   return (
@@ -128,6 +139,24 @@ export function SessionManagerModal({
               className="w-full rounded-lg border border-[var(--line)] bg-[var(--bg)] px-3 py-2 text-sm text-[var(--ink)] outline-none ring-[var(--accent)] placeholder:text-[var(--muted)] focus:ring-2 disabled:opacity-50"
             />
           </div>
+          <div>
+            <label
+              htmlFor="task-description"
+              className="mb-1 block text-xs font-medium text-[var(--muted)]"
+            >
+              任务基本描述
+            </label>
+            <textarea
+              id="task-description"
+              value={description}
+              onChange={(event) => setDescription(event.target.value)}
+              maxLength={1000}
+              rows={4}
+              placeholder="说明目标受众、使用场景、风格约束、必含元素等。会写入生图与评审的模型上下文。"
+              disabled={busy}
+              className="w-full resize-y rounded-lg border border-[var(--line)] bg-[var(--bg)] px-3 py-2 text-sm leading-relaxed text-[var(--ink)] outline-none ring-[var(--accent)] placeholder:text-[var(--muted)] focus:ring-2 disabled:opacity-50"
+            />
+          </div>
           {formError && (
             <p className="text-xs text-red-600" role="alert">
               {formError}
@@ -183,7 +212,12 @@ export function SessionManagerModal({
                       <div className="truncate text-sm font-medium text-[var(--ink)]">
                         {session.title}
                       </div>
-                      <div className="truncate text-xs text-[var(--muted)]">
+                      {session.description ? (
+                        <div className="mt-0.5 line-clamp-2 text-xs leading-snug text-[var(--muted)]">
+                          {session.description}
+                        </div>
+                      ) : null}
+                      <div className="mt-0.5 truncate text-xs text-[var(--muted)]">
                         {session.ownerName || "未署名"} · {session.iterationCount}{" "}
                         轮 ·{" "}
                         {new Date(session.updatedAt).toLocaleString("zh-CN")}

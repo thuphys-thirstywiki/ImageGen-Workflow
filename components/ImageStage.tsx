@@ -47,7 +47,17 @@ export function ImageStage({
       </div>
 
       <div className="relative z-[1] flex min-h-0 flex-1 items-center justify-center p-3">
-        {src ? (
+        {loading ? (
+          <div className="flex flex-col items-center gap-3 px-4 text-center">
+            <div
+              className="h-9 w-9 animate-spin rounded-full border-2 border-[var(--line)] border-t-[var(--accent)]"
+              aria-hidden
+            />
+            <p className="text-sm text-[var(--muted)]">
+              生图与评审进行中，完成后一并展示
+            </p>
+          </div>
+        ) : src ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={src}

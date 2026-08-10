@@ -26,6 +26,8 @@ export type Iteration = {
 export type Session = {
   id: string;
   title: string;
+  /** High-level brief for the design task; included in model context. */
+  description: string;
   /** Display name of the person who created / owns this task. */
   ownerName: string;
   createdAt: string;
@@ -36,6 +38,7 @@ export type Session = {
 export type SessionSummary = {
   id: string;
   title: string;
+  description: string;
   ownerName: string;
   createdAt: string;
   updatedAt: string;

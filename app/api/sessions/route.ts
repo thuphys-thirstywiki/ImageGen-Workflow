@@ -18,16 +18,19 @@ export async function POST(request: Request) {
     const body = (await request.json()) as {
       title?: string;
       ownerName?: string;
+      description?: string;
     };
     const title = typeof body.title === "string" ? body.title : "";
     const ownerName = typeof body.ownerName === "string" ? body.ownerName : "";
-    if (!title.trim() || !ownerName.trim()) {
+    const description =
+      typeof body.description === "string" ? body.description : "";
+    if (!title.trim() || !ownerName.trim() || !description.trim()) {
       return NextResponse.json(
-        { error: "请填写任务名称和使用者姓名" },
+        { error: "请填写任务名称、使用者姓名和任务基本描述" },
         { status: 400 },
       );
     }
-    const session = await createSession(title, ownerName);
+    const session = await createSession(title, ownerName, description);
     return NextResponse.json({ session }, { status: 201 });
   } catch (error) {
     const message = error instanceof Error ? error.message : "创建任务失败";

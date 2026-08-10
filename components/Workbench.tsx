@@ -128,6 +128,7 @@ export function Workbench() {
   async function handleCreateSession(input: {
     title: string;
     ownerName: string;
+    description: string;
   }) {
     setBusy("load");
     setError(null);
@@ -137,6 +138,7 @@ export function Workbench() {
         body: JSON.stringify({
           title: input.title,
           ownerName: input.ownerName,
+          description: input.description,
         }),
       });
       setSession(created.session);
@@ -185,7 +187,6 @@ export function Workbench() {
     setBusy("generate");
     setError(null);
     setPromptDraft("");
-    let iterationId: string | null = null;
     try {
       const endpoint =
         session.iterations.length === 0
@@ -198,17 +199,23 @@ export function Workbench() {
           body: JSON.stringify({ prompt: trimmed }),
         },
       );
-      setSession(data.session);
-      iterationId = data.iteration.id;
-      setActiveIterationId(iterationId);
-      setInputMode("prompt");
-      await refreshList();
 
+      // Keep the previous stage until critique finishes — do not reveal the new image early.
       setBusy("critique");
       try {
-        const withCritique = await runCritique(data.session.id, iterationId);
+        const withCritique = await runCritique(
+          data.session.id,
+          data.iteration.id,
+        );
         setSession(withCritique);
+        setActiveIterationId(data.iteration.id);
+        setInputMode("prompt");
+        await refreshList();
       } catch (critiqueErr) {
+        setSession(data.session);
+        setActiveIterationId(data.iteration.id);
+        setInputMode("prompt");
+        await refreshList();
         setError(
           critiqueErr instanceof Error
             ? `图片已生成，但评审失败：${critiqueErr.message}`
@@ -235,7 +242,7 @@ export function Workbench() {
     }
 
     const file = pendingImage.file;
-    setBusy("load");
+    setBusy("generate");
     setError(null);
     clearPendingImage();
 
@@ -259,10 +266,6 @@ export function Workbench() {
       if (!response.ok || !data.session || !data.iteration) {
         throw new Error(data.error || `上传失败 (${response.status})`);
       }
-      setSession(data.session);
-      setActiveIterationId(data.iteration.id);
-      setInputMode("prompt");
-      await refreshList();
 
       setBusy("critique");
       try {
@@ -271,7 +274,14 @@ export function Workbench() {
           data.iteration.id,
         );
         setSession(withCritique);
+        setActiveIterationId(data.iteration.id);
+        setInputMode("prompt");
+        await refreshList();
       } catch (critiqueErr) {
+        setSession(data.session);
+        setActiveIterationId(data.iteration.id);
+        setInputMode("prompt");
+        await refreshList();
         setError(
           critiqueErr instanceof Error
             ? `图片已上传，但评审失败：${critiqueErr.message}`
@@ -367,6 +377,14 @@ export function Workbench() {
                 ? `${titleDraft}${session.ownerName ? ` · ${session.ownerName}` : ""} · ${session.iterations.length} 轮`
                 : "Prompt → 生图 / 传图 → VLM 评审 → 再迭代"}
             </p>
+            {session?.description ? (
+              <p
+                className="mt-0.5 line-clamp-1 text-[11px] text-[var(--muted)]"
+                title={session.description}
+              >
+                {session.description}
+              </p>
+            ) : null}
           </div>
           <button
             type="button"
@@ -507,7 +525,11 @@ export function Workbench() {
                       onClick={() => void handleUploadAndCritique()}
                       className="shrink-0 rounded-lg bg-[var(--accent)] px-3 py-2 text-sm font-medium text-white transition hover:bg-[var(--accent-hover)] disabled:opacity-50"
                     >
-                      {busy === "critique" ? "评审中…" : "提交并评审"}
+                      {busy === "generate" || busy === "load"
+                        ? "上传中…"
+                        : busy === "critique"
+                          ? "评审中…"
+                          : "提交并评审"}
                     </button>
                   </div>
                 ) : (
