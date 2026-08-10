@@ -23,6 +23,8 @@ export type Iteration = {
 export type Session = {
   id: string;
   title: string;
+  /** Display name of the person who created / owns this task. */
+  ownerName: string;
   createdAt: string;
   updatedAt: string;
   iterations: Iteration[];
@@ -31,6 +33,7 @@ export type Session = {
 export type SessionSummary = {
   id: string;
   title: string;
+  ownerName: string;
   createdAt: string;
   updatedAt: string;
   iterationCount: number;

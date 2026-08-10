@@ -15,8 +15,19 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const body = (await request.json()) as { title?: string };
-    const session = await createSession(body.title || "未命名设计任务");
+    const body = (await request.json()) as {
+      title?: string;
+      ownerName?: string;
+    };
+    const title = typeof body.title === "string" ? body.title : "";
+    const ownerName = typeof body.ownerName === "string" ? body.ownerName : "";
+    if (!title.trim() || !ownerName.trim()) {
+      return NextResponse.json(
+        { error: "请填写任务名称和使用者姓名" },
+        { status: 400 },
+      );
+    }
+    const session = await createSession(title, ownerName);
     return NextResponse.json({ session }, { status: 201 });
   } catch (error) {
     const message = error instanceof Error ? error.message : "创建任务失败";

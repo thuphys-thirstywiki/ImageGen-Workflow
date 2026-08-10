@@ -123,15 +123,7 @@ export async function listSessions(): Promise<SessionSummary[]> {
     for (const id of ids) {
       const session = await getSession(id);
       if (!session) continue;
-      const latest = session.iterations[session.iterations.length - 1];
-      summaries.push({
-        id: session.id,
-        title: session.title,
-        createdAt: session.createdAt,
-        updatedAt: session.updatedAt,
-        iterationCount: session.iterations.length,
-        latestImagePath: latest?.imagePath,
-      });
+      summaries.push(toSummary(session));
     }
   } else {
     const root = await ensureLocalRoot();
@@ -142,15 +134,7 @@ export async function listSessions(): Promise<SessionSummary[]> {
       if (!entry.isDirectory()) continue;
       const session = await getSession(entry.name);
       if (!session) continue;
-      const latest = session.iterations[session.iterations.length - 1];
-      summaries.push({
-        id: session.id,
-        title: session.title,
-        createdAt: session.createdAt,
-        updatedAt: session.updatedAt,
-        iterationCount: session.iterations.length,
-        latestImagePath: latest?.imagePath,
-      });
+      summaries.push(toSummary(session));
     }
   }
 
@@ -159,20 +143,54 @@ export async function listSessions(): Promise<SessionSummary[]> {
   );
 }
 
-export async function getSession(sessionId: string): Promise<Session | null> {
-  assertSafeSessionId(sessionId);
-  if (useBlobStorage()) {
-    return readBlobSession(sessionId);
-  }
-  return readLocalSession(sessionId);
+function normalizeSession(raw: Session): Session {
+  return {
+    ...raw,
+    title: (raw.title || "").trim() || "未命名设计任务",
+    ownerName: (raw.ownerName || "").trim(),
+    iterations: Array.isArray(raw.iterations) ? raw.iterations : [],
+  };
 }
 
-export async function createSession(title: string): Promise<Session> {
+function toSummary(session: Session): SessionSummary {
+  const latest = session.iterations[session.iterations.length - 1];
+  return {
+    id: session.id,
+    title: session.title,
+    ownerName: session.ownerName,
+    createdAt: session.createdAt,
+    updatedAt: session.updatedAt,
+    iterationCount: session.iterations.length,
+    latestImagePath: latest?.imagePath,
+  };
+}
+
+export async function getSession(sessionId: string): Promise<Session | null> {
+  assertSafeSessionId(sessionId);
+  const raw = useBlobStorage()
+    ? await readBlobSession(sessionId)
+    : await readLocalSession(sessionId);
+  return raw ? normalizeSession(raw) : null;
+}
+
+export async function createSession(
+  title: string,
+  ownerName: string,
+): Promise<Session> {
+  const trimmedTitle = title.trim();
+  const trimmedOwner = ownerName.trim();
+  if (!trimmedTitle) {
+    throw new Error("请填写任务名称");
+  }
+  if (!trimmedOwner) {
+    throw new Error("请填写使用者姓名");
+  }
   const id = randomUUID().replace(/-/g, "").slice(0, 16);
   const now = new Date().toISOString();
   const session: Session = {
     id,
-    title: title.trim() || "未命名设计任务",
+    title: trimmedTitle,
+    ownerName: trimmedOwner,
     createdAt: now,
     updatedAt: now,
     iterations: [],

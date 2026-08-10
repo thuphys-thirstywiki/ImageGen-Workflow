@@ -125,19 +125,19 @@ export function Workbench() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function handleCreateSession() {
+  async function handleCreateSession(input: {
+    title: string;
+    ownerName: string;
+  }) {
     setBusy("load");
     setError(null);
     try {
-      const stamp = new Date().toLocaleString("zh-CN", {
-        month: "numeric",
-        day: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-      });
       const created = await apiJson<{ session: Session }>("/api/sessions", {
         method: "POST",
-        body: JSON.stringify({ title: `新任务 ${stamp}` }),
+        body: JSON.stringify({
+          title: input.title,
+          ownerName: input.ownerName,
+        }),
       });
       setSession(created.session);
       setActiveIterationId(null);
@@ -320,7 +320,7 @@ export function Workbench() {
             </p>
             <p className="truncate text-xs text-[var(--muted)]">
               {session
-                ? `${titleDraft} · ${session.iterations.length} 轮`
+                ? `${titleDraft}${session.ownerName ? ` · ${session.ownerName}` : ""} · ${session.iterations.length} 轮`
                 : "Prompt → 生图 / 传图 → VLM 评审 → 再迭代"}
             </p>
           </div>
@@ -514,7 +514,7 @@ export function Workbench() {
         activeId={session?.id ?? null}
         onClose={() => setTaskModalOpen(false)}
         onSelect={(id) => void loadSession(id)}
-        onCreate={() => void handleCreateSession()}
+        onCreate={(input) => void handleCreateSession(input)}
         onDelete={(id) => void handleDelete(id)}
         busy={isBusy}
       />

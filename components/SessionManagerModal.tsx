@@ -1,7 +1,10 @@
 "use client";
 
+import { FormEvent, useEffect, useState } from "react";
 import type { SessionSummary } from "@/lib/types";
 import { imageUrl } from "@/lib/client";
+
+const OWNER_NAME_KEY = "igw_owner_name";
 
 type Props = {
   open: boolean;
@@ -9,7 +12,7 @@ type Props = {
   activeId: string | null;
   onClose: () => void;
   onSelect: (id: string) => void;
-  onCreate: () => void;
+  onCreate: (input: { title: string; ownerName: string }) => void | Promise<void>;
   onDelete: (id: string) => void;
   busy?: boolean;
 };
@@ -24,7 +27,39 @@ export function SessionManagerModal({
   onDelete,
   busy,
 }: Props) {
+  const [title, setTitle] = useState("");
+  const [ownerName, setOwnerName] = useState("");
+  const [formError, setFormError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    setTitle("");
+    setFormError(null);
+    try {
+      setOwnerName(localStorage.getItem(OWNER_NAME_KEY) || "");
+    } catch {
+      setOwnerName("");
+    }
+  }, [open]);
+
   if (!open) return null;
+
+  async function handleSubmit(event: FormEvent) {
+    event.preventDefault();
+    const trimmedTitle = title.trim();
+    const trimmedOwner = ownerName.trim();
+    if (!trimmedTitle || !trimmedOwner) {
+      setFormError("请填写任务名称和使用者姓名");
+      return;
+    }
+    setFormError(null);
+    try {
+      localStorage.setItem(OWNER_NAME_KEY, trimmedOwner);
+    } catch {
+      // ignore quota / private mode
+    }
+    await onCreate({ title: trimmedTitle, ownerName: trimmedOwner });
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-4 backdrop-blur-sm">
@@ -55,16 +90,57 @@ export function SessionManagerModal({
           </button>
         </div>
 
-        <div className="border-b border-[var(--line)] px-5 py-3">
+        <form
+          onSubmit={(event) => void handleSubmit(event)}
+          className="space-y-3 border-b border-[var(--line)] px-5 py-4"
+        >
+          <div>
+            <label
+              htmlFor="task-title"
+              className="mb-1 block text-xs font-medium text-[var(--muted)]"
+            >
+              任务名称
+            </label>
+            <input
+              id="task-title"
+              value={title}
+              onChange={(event) => setTitle(event.target.value)}
+              maxLength={80}
+              placeholder="例如：海报主视觉 v1"
+              disabled={busy}
+              className="w-full rounded-lg border border-[var(--line)] bg-[var(--bg)] px-3 py-2 text-sm text-[var(--ink)] outline-none ring-[var(--accent)] placeholder:text-[var(--muted)] focus:ring-2 disabled:opacity-50"
+            />
+          </div>
+          <div>
+            <label
+              htmlFor="task-owner"
+              className="mb-1 block text-xs font-medium text-[var(--muted)]"
+            >
+              使用者姓名
+            </label>
+            <input
+              id="task-owner"
+              value={ownerName}
+              onChange={(event) => setOwnerName(event.target.value)}
+              maxLength={40}
+              placeholder="你的名字"
+              disabled={busy}
+              className="w-full rounded-lg border border-[var(--line)] bg-[var(--bg)] px-3 py-2 text-sm text-[var(--ink)] outline-none ring-[var(--accent)] placeholder:text-[var(--muted)] focus:ring-2 disabled:opacity-50"
+            />
+          </div>
+          {formError && (
+            <p className="text-xs text-red-600" role="alert">
+              {formError}
+            </p>
+          )}
           <button
-            type="button"
-            onClick={onCreate}
+            type="submit"
             disabled={busy}
             className="w-full rounded-lg bg-[var(--accent)] px-3 py-2.5 text-sm font-medium text-white transition hover:bg-[var(--accent-hover)] disabled:opacity-50"
           >
             新建设计任务
           </button>
-        </div>
+        </form>
 
         <ul className="flex-1 overflow-y-auto p-3">
           {sessions.length === 0 && (
@@ -107,8 +183,9 @@ export function SessionManagerModal({
                       <div className="truncate text-sm font-medium text-[var(--ink)]">
                         {session.title}
                       </div>
-                      <div className="text-xs text-[var(--muted)]">
-                        {session.iterationCount} 轮 ·{" "}
+                      <div className="truncate text-xs text-[var(--muted)]">
+                        {session.ownerName || "未署名"} · {session.iterationCount}{" "}
+                        轮 ·{" "}
                         {new Date(session.updatedAt).toLocaleString("zh-CN")}
                       </div>
                     </div>
