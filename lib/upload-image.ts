@@ -1,5 +1,4 @@
 import { randomUUID } from "crypto";
-import { critiqueIteration } from "./critique";
 import { appendIteration, saveImageBuffer } from "./sessions";
 import type { Iteration, Session } from "./types";
 
@@ -11,8 +10,8 @@ function extFromMime(mime: string | undefined): string {
   return "png";
 }
 
-/** Each round must have an image: either text-to-image, or a user-uploaded file. */
-export async function uploadImageForCritique(
+/** Store an uploaded image as a new iteration (critique is a separate step). */
+export async function uploadImageForSession(
   sessionId: string,
   buffer: Buffer,
   mimeType: string | undefined,
@@ -29,10 +28,6 @@ export async function uploadImageForCritique(
     createdAt: new Date().toISOString(),
   };
 
-  const withImage = await appendIteration(sessionId, iteration);
-  const { session } = await critiqueIteration(withImage, iteration.id);
-  const updated =
-    session.iterations.find((item) => item.id === iterationId) || iteration;
-
-  return { session, iteration: updated };
+  const session = await appendIteration(sessionId, iteration);
+  return { session, iteration };
 }

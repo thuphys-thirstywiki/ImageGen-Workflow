@@ -156,6 +156,20 @@ export function Workbench() {
     }
   }
 
+  async function runCritique(
+    sessionId: string,
+    iterationId: string,
+  ): Promise<Session> {
+    const data = await apiJson<{ session: Session }>(
+      `/api/sessions/${sessionId}/critique`,
+      {
+        method: "POST",
+        body: JSON.stringify({ iterationId }),
+      },
+    );
+    return data.session;
+  }
+
   async function handleGenerate(prompt: string) {
     if (!session) {
       setError("请先通过「任务管理」新建或打开一个任务");
@@ -171,20 +185,36 @@ export function Workbench() {
     setBusy("generate");
     setError(null);
     setPromptDraft("");
+    let iterationId: string | null = null;
     try {
       const endpoint =
         session.iterations.length === 0
           ? `/api/sessions/${session.id}/generate`
           : `/api/sessions/${session.id}/iterate`;
-      const data = await apiJson<{ session: Session }>(endpoint, {
-        method: "POST",
-        body: JSON.stringify({ prompt: trimmed }),
-      });
+      const data = await apiJson<{ session: Session; iteration: { id: string } }>(
+        endpoint,
+        {
+          method: "POST",
+          body: JSON.stringify({ prompt: trimmed }),
+        },
+      );
       setSession(data.session);
-      const latest = data.session.iterations[data.session.iterations.length - 1];
-      setActiveIterationId(latest?.id ?? null);
+      iterationId = data.iteration.id;
+      setActiveIterationId(iterationId);
       setInputMode("prompt");
       await refreshList();
+
+      setBusy("critique");
+      try {
+        const withCritique = await runCritique(data.session.id, iterationId);
+        setSession(withCritique);
+      } catch (critiqueErr) {
+        setError(
+          critiqueErr instanceof Error
+            ? `图片已生成，但评审失败：${critiqueErr.message}`
+            : "图片已生成，但评审失败；可点「仅重新评审」重试",
+        );
+      }
     } catch (err) {
       setPromptDraft(trimmed);
       setError(err instanceof Error ? err.message : "生图失败");
@@ -205,7 +235,7 @@ export function Workbench() {
     }
 
     const file = pendingImage.file;
-    setBusy("critique");
+    setBusy("load");
     setError(null);
     clearPendingImage();
 
@@ -216,22 +246,42 @@ export function Workbench() {
         method: "POST",
         body: form,
       });
-      const data = (await response.json()) as {
-        session?: Session;
-        error?: string;
-      };
-      if (!response.ok || !data.session) {
+      const text = await response.text();
+      let data: { session?: Session; iteration?: { id: string }; error?: string };
+      try {
+        data = text ? (JSON.parse(text) as typeof data) : {};
+      } catch {
+        throw new Error(
+          text.replace(/\s+/g, " ").trim().slice(0, 180) ||
+            `上传失败 (${response.status})`,
+        );
+      }
+      if (!response.ok || !data.session || !data.iteration) {
         throw new Error(data.error || `上传失败 (${response.status})`);
       }
       setSession(data.session);
-      const latest = data.session.iterations[data.session.iterations.length - 1];
-      setActiveIterationId(latest?.id ?? null);
+      setActiveIterationId(data.iteration.id);
       setInputMode("prompt");
       await refreshList();
+
+      setBusy("critique");
+      try {
+        const withCritique = await runCritique(
+          data.session.id,
+          data.iteration.id,
+        );
+        setSession(withCritique);
+      } catch (critiqueErr) {
+        setError(
+          critiqueErr instanceof Error
+            ? `图片已上传，但评审失败：${critiqueErr.message}`
+            : "图片已上传，但评审失败；可点「仅重新评审」重试",
+        );
+      }
     } catch (err) {
       setInputMode("upload");
       setImageFromFile(file);
-      setError(err instanceof Error ? err.message : "上传评审失败");
+      setError(err instanceof Error ? err.message : "上传失败");
     } finally {
       setBusy("idle");
     }
@@ -242,14 +292,8 @@ export function Workbench() {
     setBusy("critique");
     setError(null);
     try {
-      const data = await apiJson<{ session: Session }>(
-        `/api/sessions/${session.id}/critique`,
-        {
-          method: "POST",
-          body: JSON.stringify({ iterationId: activeIteration.id }),
-        },
-      );
-      setSession(data.session);
+      const withCritique = await runCritique(session.id, activeIteration.id);
+      setSession(withCritique);
     } catch (err) {
       setError(err instanceof Error ? err.message : "评审失败");
     } finally {
@@ -420,7 +464,11 @@ export function Workbench() {
                   onClick={() => void handleGenerate(promptDraft)}
                   className="shrink-0 self-stretch rounded-lg bg-[var(--accent)] px-3 text-sm font-medium text-white transition hover:bg-[var(--accent-hover)] disabled:opacity-50"
                 >
-                  {busy === "generate" ? "处理中…" : "提交并评审"}
+                  {busy === "generate"
+                    ? "生图中…"
+                    : busy === "critique"
+                      ? "评审中…"
+                      : "提交并评审"}
                 </button>
               </div>
             ) : (
@@ -459,7 +507,7 @@ export function Workbench() {
                       onClick={() => void handleUploadAndCritique()}
                       className="shrink-0 rounded-lg bg-[var(--accent)] px-3 py-2 text-sm font-medium text-white transition hover:bg-[var(--accent-hover)] disabled:opacity-50"
                     >
-                      {busy === "critique" ? "处理中…" : "提交并评审"}
+                      {busy === "critique" ? "评审中…" : "提交并评审"}
                     </button>
                   </div>
                 ) : (

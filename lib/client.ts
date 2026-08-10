@@ -4,6 +4,23 @@ export function imageUrl(imagePath?: string): string | undefined {
   return `/api/images/${imagePath.split("/").map(encodeURIComponent).join("/")}`;
 }
 
+function friendlyNonJsonError(status: number, text: string): string {
+  const compact = text.replace(/\s+/g, " ").trim();
+  if (
+    status === 504 ||
+    /timed out|timeout|Task timed out/i.test(compact)
+  ) {
+    return "请求超时。生图与评审已分开执行，可先查看图片，再点「仅重新评审」。";
+  }
+  if (/An error occurred/i.test(compact)) {
+    return `服务暂时失败（${status}）。若图片已生成，可点「仅重新评审」重试。`;
+  }
+  if (compact.length > 180) {
+    return `${compact.slice(0, 180)}…`;
+  }
+  return compact || `请求失败 (${status})`;
+}
+
 export async function apiJson<T>(
   url: string,
   init?: RequestInit,
@@ -15,9 +32,22 @@ export async function apiJson<T>(
       ...(init?.headers || {}),
     },
   });
-  const data = (await response.json()) as T & { error?: string };
+  const text = await response.text();
+  let data: (T & { error?: string }) | null = null;
+  if (text) {
+    try {
+      data = JSON.parse(text) as T & { error?: string };
+    } catch {
+      throw new Error(friendlyNonJsonError(response.status, text));
+    }
+  }
   if (!response.ok) {
-    throw new Error(data.error || `请求失败 (${response.status})`);
+    throw new Error(
+      data?.error || friendlyNonJsonError(response.status, text || ""),
+    );
+  }
+  if (!data) {
+    throw new Error(`请求失败 (${response.status})：空响应`);
   }
   return data;
 }

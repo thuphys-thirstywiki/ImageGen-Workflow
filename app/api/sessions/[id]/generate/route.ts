@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { critiqueIteration } from "@/lib/critique";
 import { publicErrorMessage } from "@/lib/errors";
 import { generateImageForSession } from "@/lib/image-gen";
 import { getSession } from "@/lib/sessions";
@@ -27,17 +26,10 @@ export async function POST(request: Request, context: RouteContext) {
       id,
       prompt,
     );
-    const { session: withCritique } = await critiqueIteration(
-      withImage,
-      iteration.id,
-    );
-    const updatedIteration =
-      withCritique.iterations.find((item) => item.id === iteration.id) ||
-      iteration;
 
     return NextResponse.json({
-      session: withCritique,
-      iteration: updatedIteration,
+      session: withImage,
+      iteration,
     });
   } catch (error) {
     const message = publicErrorMessage(error, "生图失败");

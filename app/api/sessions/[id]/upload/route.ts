@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/sessions";
 import { publicErrorMessage } from "@/lib/errors";
-import { uploadImageForCritique } from "@/lib/upload-image";
+import { uploadImageForSession } from "@/lib/upload-image";
 
 export const runtime = "nodejs";
-export const maxDuration = 120;
+export const maxDuration = 60;
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -32,7 +32,7 @@ export async function POST(request: Request, context: RouteContext) {
     }
 
     const buffer = Buffer.from(await file.arrayBuffer());
-    const { session: updated, iteration } = await uploadImageForCritique(
+    const { session: updated, iteration } = await uploadImageForSession(
       id,
       buffer,
       file.type,
@@ -40,7 +40,7 @@ export async function POST(request: Request, context: RouteContext) {
 
     return NextResponse.json({ session: updated, iteration });
   } catch (error) {
-    const message = publicErrorMessage(error, "上传评审失败");
+    const message = publicErrorMessage(error, "上传失败");
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
