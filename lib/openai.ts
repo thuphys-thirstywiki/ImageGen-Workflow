@@ -18,7 +18,7 @@ export function normalizeBaseURL(baseURL: string): string {
 }
 
 export function getImageModel(): string {
-  return process.env.IMAGE_MODEL?.trim() || "gpt-image-2-c";
+  return process.env.IMAGE_MODEL?.trim() || "gemini-3-pro-image";
 }
 
 export function getVlmModel(): string {
